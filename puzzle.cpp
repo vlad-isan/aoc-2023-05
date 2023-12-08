@@ -80,10 +80,10 @@ int do_puzzle_1(std::ifstream &file) {
 
     parse_list(file, almanac);
 
-    uint32_t lowest_location = UINT32_MAX;
+    uint64_t lowest_location = UINT64_MAX;
 
     for (const auto &seed: almanac.maps_types[(MapType)0]) {
-        const uint32_t location = get_lowest_location(almanac, seed.range.first, MapType::SOIL);
+        const uint64_t location = get_lowest_location(almanac, seed.range.first, MapType::SOIL);
 
         if (location < lowest_location) {
             lowest_location = location;
@@ -96,22 +96,52 @@ int do_puzzle_1(std::ifstream &file) {
 int do_puzzle_2(std::ifstream &file) {
     std::string line;
 
-    while (std::getline(file, line)) {
-        fmt::println("{}", line);
+    std::getline(file, line);
+
+    std::vector<Map> seeds = parse_seeds_ranges(line);
+
+    Almanac almanac;
+    almanac.maps_types[MapType::SEED] = seeds;
+
+    parse_list(file, almanac);
+
+    uint64_t lowest_location = UINT64_MAX;
+
+    for (const auto &seed: almanac.maps_types[MapType::SEED]) {
+        const uint64_t location = get_lowest_location_ranges(almanac, seed.range, MapType::SOIL);
+
+        if (location < lowest_location) {
+            lowest_location = location;
+        }
     }
 
-    return 0;
+    return lowest_location;
 }
 
 std::vector<Map> parse_seeds(const std::string &line) {
     std::vector<Map> seeds;
     std::istringstream stream{line};
     std::string ignore;
-    uint32_t range_start;
+    uint64_t range_start;
     stream >> ignore;
 
     while (stream >> range_start) {
         seeds.emplace_back(Map{.range = {range_start, range_start}});
+    }
+
+    return seeds;
+}
+
+std::vector<Map> parse_seeds_ranges(const std::string &line) {
+    std::vector<Map> seeds;
+    std::istringstream stream{line};
+    std::string ignore;
+    uint64_t range_start;
+    uint64_t range_len;
+    stream >> ignore;
+
+    while (stream >> range_start >> range_len) {
+        seeds.emplace_back(Map{.range = {range_start, range_start + range_len}});
     }
 
     return seeds;
@@ -129,84 +159,117 @@ void parse_list(std::ifstream &file, Almanac &almanac) {
             current_map_type = map_type_map.at(line);
 
             almanac.maps_types[current_map_type] = std::vector<Map>{};
-
-            fmt::println("parsing list for line {}", line);
             continue;
         }
 
         std::istringstream iss{line};
 
-        uint32_t dest_start;
-        uint32_t source_start;
-        uint32_t len;
+        uint64_t dest_start;
+        uint64_t source_start;
+        uint64_t len;
 
         iss >> dest_start >> source_start >> len;
-        fmt::println("{} {} {}", dest_start, source_start, len);
 
         almanac.maps_types[current_map_type].emplace_back(Map{
             .range = {dest_start, dest_start + len},
             .source_range = {source_start, source_start + len}
         });
     }
-
-    // current map's now parsed
-    // we should match the sources & destination
-    // for (auto &source: sources) {
-    //     std::vector<Range> existing_ranges{destinations.size()};
-    //     std::vector<Range> new_ranges;
-    //
-    //     for (auto &dest: destinations) {
-    //         existing_ranges.emplace_back(dest->source_range);
-    //     }
-    //
-    //     std::sort(existing_ranges.begin(), existing_ranges.end());
-    //     uint32_t end = source->range.first;
-    //
-    //     for (const auto &existing_range: existing_ranges) {
-    //         if (end < existing_range.first) {
-    //             new_ranges.emplace_back(end, existing_range.first);
-    //         }
-    //
-    //         end = std::max(end, existing_range.second);
-    //     }
-    //
-    //     if (end < source->range.second) {
-    //         new_ranges.emplace_back(end, source->range.second);
-    //     }
-    //
-    //     auto it = std::ranges::find_if(destinations, [&](auto &dest) {
-    //         return source->range.first >= dest->source_range.first && source->range.second <= dest->source_range.second;
-    //     });
-    //
-    //     if (it != destinations.end()) {
-    //         source->destination = *it;
-    //     }
-    //     else {
-    //         // source->destination = new Map{
-    //         //     .type = current_map_type,
-    //         //     .range = source->range,
-    //         //     .source_range = source->range
-    //         // };
-    //         //
-    //         // destinations.emplace_back(source->destination);
-    //     }
-    // }
-    //
-    // // drill down into destinations
-    // if (!destinations.empty() && !file.eof()) {
-    //     parse_list(file, destinations);
-    // }
 }
 
-int get_lowest_location(Almanac &almanac, uint32_t source_value, MapType map_type) {
+int get_lowest_location(Almanac &almanac, uint64_t source_value, MapType map_type) {
     auto it = std::ranges::find_if(almanac.maps_types.at(map_type), [&](auto &dest) {
         return source_value >= dest.source_range.first && source_value <= dest.source_range.second;
     });
 
-    const Map &map = (it != almanac.maps_types.at(map_type).end()) ? *it : Map{.range = {source_value, source_value}, .source_range = {source_value, source_value}};
+    const Map &map = (it != almanac.maps_types.at(map_type).end())
+                         ? *it
+                         : Map{.range = {source_value, source_value}, .source_range = {source_value, source_value}};
 
 
-    uint32_t value = map.range.first + (source_value - map.source_range.first);
+    uint64_t value = map.range.first + (source_value - map.source_range.first);
 
     return map_type == MapType::LOCATION ? value : get_lowest_location(almanac, value, (MapType)((int)map_type + 1));
+}
+
+int get_lowest_location_ranges(Almanac &almanac, const Range &source_range, MapType map_type) {
+    std::vector<Map> &destinations = almanac.maps_types.at(map_type);
+    std::vector<Range> existing_ranges;
+    std::vector<Map> new_destinations;
+
+    existing_ranges.reserve(destinations.size());
+    for (auto &dest: destinations) {
+        existing_ranges.emplace_back(dest.source_range);
+    }
+
+    std::ranges::sort(existing_ranges);
+    uint64_t it = source_range.first;
+    bool is_covered = false; // Flag to check if source_range is covered by existing ranges
+
+    for (const auto &existing_range: existing_ranges) {
+        // If the current point (it) is already beyond the source range, break the loop
+        if (it >= source_range.second) {
+            is_covered = true;
+            break;
+        }
+
+        // Check if there is a gap before the existing_range and the source_range is not yet fully covered
+        if (it < existing_range.first && !is_covered) {
+            new_destinations.emplace_back(Map{
+                .range = {it, std::min(source_range.second, existing_range.first)},
+                .source_range = {it, std::min(source_range.second, existing_range.first)}
+            });
+        }
+
+        // Update it to the end of the current existing_range if it extends beyond it
+        if (existing_range.second > it) {
+            it = existing_range.second;
+        }
+    }
+
+    // Add the remaining part of source_range only if it was not covered by any existing range
+    if (!is_covered && it < source_range.second) {
+        new_destinations.emplace_back(Map{
+            .range = {it, source_range.second},
+            .source_range = {it, source_range.second}
+        });
+    }
+
+    destinations.insert_range(destinations.end(), new_destinations);
+
+    uint64_t lowest_value = UINT64_MAX;
+
+    for (const auto &dest: destinations | std::views::filter([&](auto &d) {
+        return source_range.first < d.source_range.second && d.source_range.first < source_range.second;
+    })) {
+        uint64_t value = 0;
+
+        if (map_type == MapType::LOCATION) {
+            if (source_range.first <= dest.source_range.first) {
+                value = dest.range.first;
+            }
+            else {
+                value = dest.range.first + source_range.first - dest.source_range.first;
+            }
+        }
+        else {
+            std::pair<uint64_t, uint64_t> new_range;
+
+            new_range.first = dest.range.first + (source_range.first <= dest.source_range.first
+                                                      ? 0
+                                                      : source_range.first - dest.source_range.first);
+            new_range.second = dest.range.second - (source_range.second >= dest.source_range.second
+                                                        ? 0
+                                                        : dest.source_range.second - source_range.second);
+
+            value = get_lowest_location_ranges(almanac, new_range,
+                                               static_cast<MapType>(static_cast<int>(map_type) + 1));
+        }
+
+        if (value < lowest_value) {
+            lowest_value = value;
+        }
+    }
+
+    return lowest_value;
 }

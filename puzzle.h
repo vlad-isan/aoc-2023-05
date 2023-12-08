@@ -49,11 +49,11 @@ const std::pmr::unordered_map<MapType, std::string> map_type_string = {
     {MapType::LOCATION, "location"}
 };
 
-using Range = std::pair<uint32_t, uint32_t>;
+using Range = std::pair<uint64_t, uint64_t>;
 
 struct Map {
-    Range source_range;
     Range range;
+    Range source_range;
 };
 
 struct Almanac {
@@ -73,9 +73,11 @@ int do_puzzle_1(std::ifstream &file);
 int do_puzzle_2(std::ifstream &file);
 
 std::vector<Map> parse_seeds(const std::string &line);
+std::vector<Map> parse_seeds_ranges(const std::string &line);
 
 void parse_list(std::ifstream &file, Almanac &almanac);
 
-int get_lowest_location(Almanac &almanac, uint32_t source_value, MapType map_type);
+int get_lowest_location(Almanac &almanac, uint64_t source_value, MapType map_type);
+int get_lowest_location_ranges(Almanac &almanac, const Range &source_range, MapType map_type);
 
 #endif //PUZZLE_H
